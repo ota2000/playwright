@@ -234,18 +234,20 @@ function cropPdfViaIncrementalUpdate(
     sizeValueEnd++;
   const size = parseInt(trailerDict.substring(sizeValueStart, sizeValueEnd), 10);
 
-  // Extract /Root and /Info references as-is.
+  // Extract /Root and /Info references as-is (e.g. "/Root 7 0 R").
   const rootIdx = trailerDict.indexOf('/Root');
   const infoIdx = trailerDict.indexOf('/Info');
   let rootRef = '';
   let infoRef = '';
   if (rootIdx !== -1) {
-    const refEnd = trailerDict.indexOf('R', rootIdx) + 1;
-    rootRef = trailerDict.substring(rootIdx, refEnd).trim();
+    const refEnd = trailerDict.indexOf(' 0 R', rootIdx);
+    if (refEnd !== -1)
+      rootRef = trailerDict.substring(rootIdx, refEnd + 4).trim();
   }
   if (infoIdx !== -1) {
-    const refEnd = trailerDict.indexOf('R', infoIdx) + 1;
-    infoRef = trailerDict.substring(infoIdx, refEnd).trim();
+    const refEnd = trailerDict.indexOf(' 0 R', infoIdx);
+    if (refEnd !== -1)
+      infoRef = trailerDict.substring(infoIdx, refEnd + 4).trim();
   }
 
   if (!rootRef)
@@ -262,9 +264,9 @@ function cropPdfViaIncrementalUpdate(
   appendix += `${String(newObjOffset).padStart(10, '0')} 00000 n \n`;
 
   appendix += 'trailer\n';
-  appendix += `<</Size ${size} /${rootRef}`;
+  appendix += `<</Size ${size} ${rootRef}`;
   if (infoRef)
-    appendix += ` /${infoRef}`;
+    appendix += ` ${infoRef}`;
   appendix += ` /Prev ${prevXrefOffset}`;
   appendix += '>>\n';
   appendix += 'startxref\n';
