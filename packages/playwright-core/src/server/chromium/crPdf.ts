@@ -80,7 +80,8 @@ export class CRPDF {
       preferCSSPageSize = false,
       margin = {},
       tagged = false,
-      outline = false
+      outline = false,
+      clip,
     } = options;
 
     let paperWidth = 8.5;
@@ -93,6 +94,15 @@ export class CRPDF {
     } else {
       paperWidth = convertPrintParameterToInches(options.width) || paperWidth;
       paperHeight = convertPrintParameterToInches(options.height) || paperHeight;
+    }
+
+    if (clip) {
+      // When clipping, use a page size large enough to contain the clip area
+      // so that the print layout matches the screen layout.
+      const requiredWidth = (clip.x + clip.width) / 96;
+      const requiredHeight = (clip.y + clip.height) / 96;
+      paperWidth = Math.max(paperWidth, requiredWidth);
+      paperHeight = Math.max(paperHeight, requiredHeight);
     }
 
     const marginTop = convertPrintParameterToInches(margin.top) || 0;
@@ -120,6 +130,146 @@ export class CRPDF {
       generateTaggedPDF,
       generateDocumentOutline
     });
-    return await readProtocolStream(this._client, result.stream!);
+    let buffer = await readProtocolStream(this._client, result.stream!);
+
+    if (clip)
+      buffer = cropPdfViaIncrementalUpdate(buffer, clip, paperHeight * 72);
+
+    return buffer;
   }
+}
+
+/**
+ * Crops a PDF to the given clip area using a PDF incremental update.
+ * Instead of modifying existing bytes, a new Page object with the updated
+ * MediaBox is appended to the PDF along with a new xref section and trailer.
+ * This is the standard PDF mechanism for modifications and avoids invalidating
+ * existing xref offsets.
+ */
+function cropPdfViaIncrementalUpdate(
+  buffer: Buffer,
+  clip: { x: number, y: number, width: number, height: number },
+  pageHeightPt: number
+): Buffer {
+  const pxToPt = 72 / 96;
+  // PDF coordinate system: origin at bottom-left, Y axis points up.
+  const llx = clip.x * pxToPt;
+  const lly = pageHeightPt - (clip.y + clip.height) * pxToPt;
+  const urx = (clip.x + clip.width) * pxToPt;
+  const ury = pageHeightPt - clip.y * pxToPt;
+  const newMediaBox = `[${llx.toFixed(2)} ${lly.toFixed(2)} ${urx.toFixed(2)} ${ury.toFixed(2)}]`;
+
+  const pdfStr = buffer.toString('binary');
+
+  // 1. Find the previous xref offset from startxref.
+  const startxrefIdx = pdfStr.lastIndexOf('startxref');
+  if (startxrefIdx === -1)
+    return buffer;
+  const newlineAfter = pdfStr.indexOf('\n', startxrefIdx + 10);
+  const prevXrefOffset = parseInt(pdfStr.substring(startxrefIdx + 10, newlineAfter), 10);
+
+  // 2. Find the Page object (match "/Type /Page" but not "/Type /Pages").
+  let pageObjNum = -1;
+  let pageObjContent = '';
+  let searchPos = 0;
+  while (searchPos < pdfStr.length) {
+    const objIdx = pdfStr.indexOf(' 0 obj\n', searchPos);
+    if (objIdx === -1)
+      break;
+
+    // Extract object number from before " 0 obj\n".
+    const lineStart = pdfStr.lastIndexOf('\n', objIdx - 1) + 1;
+    const objNumStr = pdfStr.substring(lineStart, objIdx);
+    const endObjIdx = pdfStr.indexOf('endobj', objIdx);
+    if (endObjIdx === -1) {
+      searchPos = objIdx + 7;
+      continue;
+    }
+
+    const content = pdfStr.substring(lineStart, endObjIdx + 6);
+    const typeIdx = content.indexOf('/Type /Page');
+    if (typeIdx !== -1) {
+      // Ensure it's "/Type /Page" and not "/Type /Pages".
+      const charAfter = content[typeIdx + 11];
+      if (charAfter === undefined || charAfter === '\n' || charAfter === '\r' || charAfter === '/' || charAfter === '>') {
+        pageObjNum = parseInt(objNumStr, 10);
+        pageObjContent = content;
+        break;
+      }
+    }
+    searchPos = endObjIdx + 6;
+  }
+
+  if (pageObjNum === -1)
+    return buffer;
+
+  // 3. Replace MediaBox in the Page object content.
+  const mediaBoxIdx = pageObjContent.indexOf('/MediaBox');
+  if (mediaBoxIdx === -1)
+    return buffer;
+  const bracketStart = pageObjContent.indexOf('[', mediaBoxIdx);
+  const bracketEnd = pageObjContent.indexOf(']', bracketStart);
+  if (bracketStart === -1 || bracketEnd === -1)
+    return buffer;
+  const newPageObj = pageObjContent.substring(0, bracketStart) +
+    newMediaBox +
+    pageObjContent.substring(bracketEnd + 1);
+
+  // 4. Parse trailer to extract /Size, /Root, /Info.
+  const trailerIdx = pdfStr.lastIndexOf('trailer');
+  if (trailerIdx === -1)
+    return buffer;
+  const trailerDictStart = pdfStr.indexOf('<<', trailerIdx);
+  const trailerDictEnd = pdfStr.indexOf('>>', trailerDictStart);
+  if (trailerDictStart === -1 || trailerDictEnd === -1)
+    return buffer;
+  const trailerDict = pdfStr.substring(trailerDictStart + 2, trailerDictEnd);
+
+  const sizeIdx = trailerDict.indexOf('/Size');
+  if (sizeIdx === -1)
+    return buffer;
+  const sizeValueStart = sizeIdx + 6;
+  let sizeValueEnd = sizeValueStart;
+  while (sizeValueEnd < trailerDict.length && trailerDict[sizeValueEnd] >= '0' && trailerDict[sizeValueEnd] <= '9')
+    sizeValueEnd++;
+  const size = parseInt(trailerDict.substring(sizeValueStart, sizeValueEnd), 10);
+
+  // Extract /Root and /Info references as-is.
+  const rootIdx = trailerDict.indexOf('/Root');
+  const infoIdx = trailerDict.indexOf('/Info');
+  let rootRef = '';
+  let infoRef = '';
+  if (rootIdx !== -1) {
+    const refEnd = trailerDict.indexOf('R', rootIdx) + 1;
+    rootRef = trailerDict.substring(rootIdx, refEnd).trim();
+  }
+  if (infoIdx !== -1) {
+    const refEnd = trailerDict.indexOf('R', infoIdx) + 1;
+    infoRef = trailerDict.substring(infoIdx, refEnd).trim();
+  }
+
+  if (!rootRef)
+    return buffer;
+
+  // 5. Build the incremental update appendix.
+  const newObjOffset = buffer.length + 1; // +1 for the leading newline.
+  let appendix = '\n';
+  appendix += newPageObj + '\n';
+
+  const newXrefOffset = buffer.length + appendix.length;
+  appendix += 'xref\n';
+  appendix += `${pageObjNum} 1\n`;
+  appendix += `${String(newObjOffset).padStart(10, '0')} 00000 n \n`;
+
+  appendix += 'trailer\n';
+  appendix += `<</Size ${size} /${rootRef}`;
+  if (infoRef)
+    appendix += ` /${infoRef}`;
+  appendix += ` /Prev ${prevXrefOffset}`;
+  appendix += '>>\n';
+  appendix += 'startxref\n';
+  appendix += `${newXrefOffset}\n`;
+  appendix += '%%EOF\n';
+
+  return Buffer.from(pdfStr + appendix, 'binary');
 }

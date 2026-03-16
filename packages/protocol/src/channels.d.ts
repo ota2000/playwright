@@ -2580,6 +2580,12 @@ export type PagePdfParams = {
   },
   tagged?: boolean,
   outline?: boolean,
+  clip?: {
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+  },
 };
 export type PagePdfOptions = {
   scale?: number,
@@ -2601,6 +2607,12 @@ export type PagePdfOptions = {
   },
   tagged?: boolean,
   outline?: boolean,
+  clip?: {
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+  },
 };
 export type PagePdfResult = {
   pdf: Binary,

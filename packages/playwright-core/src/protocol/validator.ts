@@ -1486,6 +1486,12 @@ scheme.PagePdfParams = tObject({
   })),
   tagged: tOptional(tBoolean),
   outline: tOptional(tBoolean),
+  clip: tOptional(tObject({
+    x: tFloat,
+    y: tFloat,
+    width: tFloat,
+    height: tFloat,
+  })),
 });
 scheme.PagePdfResult = tObject({
   pdf: tBinary,

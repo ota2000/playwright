@@ -39,3 +39,47 @@ it('should be able to generate outline', async ({ contextFactory, server, browse
   await page.pdf({ path: outputFileOutline, tagged: true, outline: true });
   expect(fs.readFileSync(outputFileOutline).byteLength).toBeGreaterThan(fs.readFileSync(outputFileNoOutline).byteLength);
 });
+
+it('should generate clipped pdf', async ({ contextFactory, browserName }) => {
+  it.skip(browserName !== 'chromium', 'Printing to pdf is currently only supported in chromium.');
+  const context = await contextFactory();
+  const page = await context.newPage();
+  await page.setContent('<div style="width: 200px; height: 200px; background: red;"></div>');
+  const clippedPdf = await page.pdf({ clip: { x: 0, y: 0, width: 200, height: 200 } });
+  expect(clippedPdf.byteLength).toBeGreaterThan(0);
+  // Verify the MediaBox was cropped to 150x150 points (200px * 72/96).
+  // Use the last MediaBox match since incremental updates append to the end.
+  const pdfText = clippedPdf.toString('binary');
+  const mediaBoxes = [...pdfText.matchAll(/\/MediaBox\s*\[([^\]]+)\]/g)];
+  expect(mediaBoxes.length).toBeGreaterThan(0);
+  const [llx, lly, urx, ury] = mediaBoxes[mediaBoxes.length - 1][1].trim().split(/\s+/).map(Number);
+  expect(urx - llx).toBeCloseTo(150, 0);
+  expect(ury - lly).toBeCloseTo(150, 0);
+});
+
+it('should clip with offset', async ({ contextFactory, browserName }) => {
+  it.skip(browserName !== 'chromium', 'Printing to pdf is currently only supported in chromium.');
+  const context = await contextFactory();
+  const page = await context.newPage();
+  await page.setContent('<div style="margin: 100px; width: 200px; height: 200px; background: blue;"></div>');
+  const clippedPdf = await page.pdf({ clip: { x: 100, y: 100, width: 200, height: 200 } });
+  expect(clippedPdf.byteLength).toBeGreaterThan(0);
+  // Verify the MediaBox offset is non-zero (x=75pt from clip.x=100px).
+  const pdfText = clippedPdf.toString('binary');
+  const mediaBoxes = [...pdfText.matchAll(/\/MediaBox\s*\[([^\]]+)\]/g)];
+  expect(mediaBoxes.length).toBeGreaterThan(0);
+  const [llx] = mediaBoxes[mediaBoxes.length - 1][1].trim().split(/\s+/).map(Number);
+  expect(llx).toBeCloseTo(75, 0);
+});
+
+it('should clip with printBackground', async ({ contextFactory, browserName }) => {
+  it.skip(browserName !== 'chromium', 'Printing to pdf is currently only supported in chromium.');
+  const context = await contextFactory();
+  const page = await context.newPage();
+  await page.setContent('<div style="width: 500px; height: 500px; background: green;"></div>');
+  const clippedPdf = await page.pdf({
+    clip: { x: 0, y: 0, width: 250, height: 250 },
+    printBackground: true,
+  });
+  expect(clippedPdf.byteLength).toBeGreaterThan(0);
+});

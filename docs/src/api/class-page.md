@@ -3034,6 +3034,16 @@ Whether or not to generate tagged (accessible) PDF. Defaults to `false`.
 
 Whether or not to embed the document outline into the PDF. Defaults to `false`.
 
+### option: Page.pdf.clip
+* since: v1.52
+- `clip` <[Object]>
+  - `x` <[float]> x-coordinate of top-left corner of clip area
+  - `y` <[float]> y-coordinate of top-left corner of clip area
+  - `width` <[float]> width of clipping area
+  - `height` <[float]> height of clipping area
+
+An object which specifies clipping of the resulting PDF. The clip area is specified in CSS pixels.
+
 ## async method: Page.pickLocator
 * since: v1.59
 * langs: js

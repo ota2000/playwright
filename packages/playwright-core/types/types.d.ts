@@ -3729,6 +3729,31 @@ export interface Page {
    */
   pdf(options?: {
     /**
+     * An object which specifies clipping of the resulting PDF. The clip area is specified in CSS pixels.
+     */
+    clip?: {
+      /**
+       * x-coordinate of top-left corner of clip area
+       */
+      x: number;
+
+      /**
+       * y-coordinate of top-left corner of clip area
+       */
+      y: number;
+
+      /**
+       * width of clipping area
+       */
+      width: number;
+
+      /**
+       * height of clipping area
+       */
+      height: number;
+    };
+
+    /**
      * Display header and footer. Defaults to `false`.
      */
     displayHeaderFooter?: boolean;

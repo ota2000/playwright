@@ -1997,6 +1997,13 @@ Page:
             right: string?
         tagged: boolean?
         outline: boolean?
+        clip:
+          type: object?
+          properties:
+            x: float
+            y: float
+            width: float
+            height: float
       returns:
         pdf: binary
 
