@@ -125,7 +125,7 @@ export class CRPDF {
       marginBottom,
       marginLeft,
       marginRight,
-      pageRanges,
+      pageRanges: clip ? '1' : pageRanges,
       preferCSSPageSize,
       generateTaggedPDF,
       generateDocumentOutline
